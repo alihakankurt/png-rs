@@ -11,10 +11,12 @@ fn main() -> ExitCode {
 
     let filepath = &args[1];
     if let Some(mut parser) = Parser::new(filepath) {
-        if parser.parse() {
-            println!("It's a PNG file.");
-        } else {
-            println!("Provided file is not a PNG.");
+        match parser.parse() {
+            Ok(chunks) => chunks.iter().for_each(|chunk| println!("{:?}", chunk)),
+            Err(e) => {
+                println!("Parser error: {}", e);
+                return ExitCode::FAILURE;
+            }
         }
     }
 
