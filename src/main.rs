@@ -10,15 +10,20 @@ fn main() -> ExitCode {
     }
 
     let filepath = &args[1];
-    if let Some(mut parser) = Parser::new(filepath) {
-        match parser.parse() {
-            Ok(chunks) => chunks.iter().for_each(|chunk| println!("{:?}", chunk)),
+    match Parser::new(filepath) {
+        Ok(mut parser) => match parser.parse() {
+            Ok(info) => {
+                println!("{:?}", info);
+                return ExitCode::SUCCESS;
+            }
             Err(e) => {
-                println!("Parser error: {}", e);
+                println!("Parser Error: {}", e);
                 return ExitCode::FAILURE;
             }
+        },
+        Err(e) => {
+            println!("Parser Error: {}", e);
+            return ExitCode::FAILURE;
         }
     }
-
-    return ExitCode::SUCCESS;
 }

@@ -1,38 +1,44 @@
 use std::{
     fs::File,
-    io::{self, ErrorKind, Read, Seek, SeekFrom},
+    io::{self, Read, Seek, SeekFrom},
 };
 
+use crate::png::{AncillaryChunk, HeaderInfo, PaletteInfo, PngInfo};
+
 #[derive(Debug)]
-pub enum Chunk {
-    None,
-    Header {
-        width: u32,
-        height: u32,
-        bit_depth: u8,
-        color_type: u8,
-        compression: u8,
-        filter: u8,
-        interlace: u8,
-    },
-    Data {
-        data: Vec<u8>,
-    },
-    Palette {
-        colors: Vec<(u8, u8, u8)>,
-    },
+pub enum ParserError {
+    IOError(io::Error),
+    InvalidSignature,
+    CorruptedFile,
+    MissingHeader,
+    MissingPalette,
+    MissingData,
+}
+
+impl std::fmt::Display for ParserError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ParserError::IOError(e) => write!(f, "IO error: {}", e),
+            ParserError::CorruptedFile => write!(f, "PNG file is corrupted"),
+            ParserError::InvalidSignature => write!(f, "Invalid PNG signature"),
+            ParserError::MissingHeader => write!(f, "IHDR chunk is missing"),
+            ParserError::MissingPalette => write!(f, "PLTE chunk is missing for indexed colors"),
+            ParserError::MissingData => {
+                write!(
+                    f,
+                    "IDAT chunk missing, at least one must present with a single byte"
+                )
+            }
+        }
+    }
+}
+
+enum ChunkParseResult {
     End,
-    Gamma {
-        gamma: u32,
-    },
-    StandardRGB {
-        rendering_intent: u8,
-    },
-    PhysicalIndex {
-        x: u32,
-        y: u32,
-        unit: u8,
-    },
+    Palette(PaletteInfo),
+    Data(Vec<u8>),
+    Chunk(AncillaryChunk),
+    Unknown([u8; 4]),
 }
 
 pub struct Parser {
@@ -49,124 +55,199 @@ impl Parser {
     const SRGB: u32 = u32::from_be_bytes(*b"sRGB");
     const PHYS: u32 = u32::from_be_bytes(*b"pHYs");
 
-    pub fn new(filepath: &String) -> Option<Self> {
-        let file = File::open(filepath);
-        if let Err(e) = file {
-            println!("Unable to read {}: {}", filepath, e);
-            return None;
+    pub fn new(filepath: &str) -> Result<Self, ParserError> {
+        match File::open(filepath) {
+            Ok(file) => Ok(Self { file }),
+            Err(e) => Err(ParserError::IOError(e)),
+        }
+    }
+
+    pub fn parse(&mut self) -> Result<PngInfo, ParserError> {
+        self.validate_signature()?;
+        let header = self.parse_header()?;
+
+        let mut palette = None;
+        let mut data = vec![];
+        let mut ancillary_chunks = vec![];
+
+        loop {
+            let parse_result = self.parse_chunk()?;
+            match parse_result {
+                ChunkParseResult::End => {
+                    break;
+                }
+                ChunkParseResult::Palette(p) => {
+                    palette = Some(p);
+                }
+                ChunkParseResult::Data(mut d) => {
+                    data.append(&mut d);
+                }
+                ChunkParseResult::Chunk(chunk) => {
+                    ancillary_chunks.push(chunk);
+                }
+                ChunkParseResult::Unknown(name) => {
+                    println!("Unknown chunk: {}", std::str::from_utf8(&name).unwrap());
+                }
+            };
         }
 
-        return Some(Self {
-            file: file.unwrap(),
+        if header.color_type == 3 && palette.is_none() {
+            return Err(ParserError::MissingPalette);
+        }
+
+        if data.len() == 0 {
+            return Err(ParserError::MissingData);
+        }
+
+        return Ok(PngInfo {
+            header,
+            palette,
+            data,
+            ancillary_chunks,
         });
     }
 
-    pub fn parse(&mut self) -> Result<Vec<Chunk>, String> {
-        let validation = self.validate_png_signature();
-        if let Err(e) = validation {
-            return Err(format!("Unable to validate png signature: {}", e));
-        }
-
-        if !validation.unwrap() {
-            return Err("Provided file is not a PNG file.".into());
-        }
-
-        let mut chunks = Vec::<Chunk>::new();
-
-        loop {
-            let chunk_result = self.parse_chunk();
-            if let Err(ref e) = chunk_result {
-                if e.kind() == ErrorKind::UnexpectedEof {
-                    break;
-                }
-            }
-
-            chunks.push(chunk_result.unwrap());
-        }
-
-        return Ok(chunks);
-    }
-
-    fn validate_png_signature(&mut self) -> io::Result<bool> {
+    fn validate_signature(&mut self) -> Result<(), ParserError> {
         let mut signature = [0u8; 8];
-        self.file.read_exact(&mut signature)?;
-        return Ok(signature == Parser::SIGNATURE);
+        self.read_to(&mut signature)?;
+        if signature != Parser::SIGNATURE {
+            return Err(ParserError::InvalidSignature);
+        }
+
+        return Ok(());
     }
 
-    fn parse_chunk(&mut self) -> io::Result<Chunk> {
-        let mut buffer = [0u8; 4];
+    fn parse_header(&mut self) -> Result<HeaderInfo, ParserError> {
+        let length = self.read_u32()?;
+        let chunk_type = self.read_u32()?;
 
-        self.file.read_exact(&mut buffer)?;
-        let length = u32::from_be_bytes(buffer);
+        if chunk_type != Parser::IHDR {
+            return Err(ParserError::MissingHeader);
+        }
 
-        self.file.read_exact(&mut buffer)?;
-        let chunk_type = u32::from_be_bytes(buffer);
+        if length != 13 {
+            return Err(ParserError::CorruptedFile);
+        }
 
-        let chunk = match chunk_type {
-            Parser::IHDR => {
-                let mut header = [0u8; 13];
-                self.file.read_exact(&mut header)?;
+        let mut data = [0u8; 13];
+        self.read_to(&mut data)?;
 
-                Chunk::Header {
-                    width: u32::from_be_bytes([header[0], header[1], header[2], header[3]]),
-                    height: u32::from_be_bytes([header[4], header[5], header[6], header[7]]),
-                    bit_depth: header[8],
-                    color_type: header[9],
-                    compression: header[10],
-                    filter: header[11],
-                    interlace: header[12],
-                }
-            }
-            Parser::IDAT => {
-                let mut data = vec![0u8; length as usize];
-                self.file.read_exact(&mut data)?;
-                Chunk::Data { data }
-            }
-            Parser::PLTE => {
-                let mut data = vec![0u8; length as usize];
-                self.file.read_exact(&mut data)?;
-
-                let colors = data
-                    .chunks_exact(3)
-                    .map(|rgb| (rgb[0], rgb[1], rgb[2]))
-                    .collect();
-
-                Chunk::Palette { colors }
-            }
-            Parser::IEND => Chunk::End,
-            Parser::SRGB => {
-                self.file.read_exact(&mut buffer[..1])?;
-                let rendering_intent = buffer[0];
-
-                Chunk::StandardRGB { rendering_intent }
-            }
-            Parser::GAMA => {
-                self.file.read_exact(&mut buffer)?;
-                let gamma = u32::from_be_bytes(buffer);
-
-                Chunk::Gamma { gamma }
-            }
-            Parser::PHYS => {
-                self.file.read_exact(&mut buffer)?;
-                let x = u32::from_be_bytes(buffer);
-
-                self.file.read_exact(&mut buffer)?;
-                let y = u32::from_be_bytes(buffer);
-
-                self.file.read_exact(&mut buffer[..1])?;
-                let unit = buffer[0];
-
-                Chunk::PhysicalIndex { x, y, unit }
-            }
-            _ => {
-                println!("Unhandled Chunk Type: {}", str::from_utf8(&buffer).unwrap());
-                self.file.seek(SeekFrom::Current(length as i64))?;
-                Chunk::None
-            }
+        let header = HeaderInfo {
+            width: Parser::to_u32(&data[0..4]),
+            height: Parser::to_u32(&data[4..8]),
+            bit_depth: data[8],
+            color_type: data[9],
+            compression: data[10],
+            filter: data[11],
+            interlace: data[12],
         };
 
-        self.file.seek(SeekFrom::Current(4))?;
+        self.seek(4)?;
+
+        return Ok(header);
+    }
+
+    fn parse_chunk(&mut self) -> Result<ChunkParseResult, ParserError> {
+        let length = self.read_u32()?;
+        let chunk_type = self.read_u32()?;
+        let data = self.read_bytes(length as usize)?;
+
+        let chunk = match chunk_type {
+            Parser::IEND => {
+                if length != 0 {
+                    return Err(ParserError::CorruptedFile);
+                }
+
+                ChunkParseResult::End
+            }
+            Parser::IDAT => {
+                if length == 0 {
+                    return Err(ParserError::CorruptedFile);
+                }
+
+                ChunkParseResult::Data(data)
+            }
+            Parser::PLTE => {
+                if length % 3 != 0 {
+                    return Err(ParserError::CorruptedFile);
+                }
+
+                ChunkParseResult::Palette(PaletteInfo {
+                    colors: data
+                        .chunks_exact(3)
+                        .map(|rgb| (rgb[0], rgb[1], rgb[2]))
+                        .collect(),
+                })
+            }
+            Parser::SRGB => {
+                if length != 1 {
+                    return Err(ParserError::CorruptedFile);
+                }
+
+                ChunkParseResult::Chunk(AncillaryChunk::StandardRGB {
+                    rendering_intent: data[0],
+                })
+            }
+            Parser::GAMA => {
+                if length != 4 {
+                    return Err(ParserError::CorruptedFile);
+                }
+
+                ChunkParseResult::Chunk(AncillaryChunk::Gamma {
+                    gamma: Parser::to_u32(&data[0..4]),
+                })
+            }
+            Parser::PHYS => {
+                if length != 9 {
+                    return Err(ParserError::CorruptedFile);
+                }
+
+                ChunkParseResult::Chunk(AncillaryChunk::PhysicalIndex {
+                    x: Parser::to_u32(&data[0..4]),
+                    y: Parser::to_u32(&data[4..8]),
+                    unit: data[8],
+                })
+            }
+            _ => ChunkParseResult::Unknown(chunk_type.to_be_bytes()),
+        };
+
+        self.seek(4)?;
 
         return Ok(chunk);
+    }
+
+    fn to_u32(slice: &[u8]) -> u32 {
+        debug_assert_eq!(slice.len(), 4);
+        return u32::from_be_bytes([slice[0], slice[1], slice[2], slice[3]]);
+    }
+
+    fn read_u32(&mut self) -> Result<u32, ParserError> {
+        let mut buffer = [0u8; 4];
+        match self.file.read_exact(&mut buffer) {
+            Ok(()) => Ok(Parser::to_u32(&buffer)),
+            Err(e) => Err(ParserError::IOError(e)),
+        }
+    }
+
+    fn read_to<'a>(&mut self, buffer: &'a mut [u8]) -> Result<&'a [u8], ParserError> {
+        match self.file.read_exact(buffer) {
+            Ok(()) => Ok(&buffer[..]),
+            Err(e) => Err(ParserError::IOError(e)),
+        }
+    }
+
+    fn read_bytes(&mut self, size: usize) -> Result<Vec<u8>, ParserError> {
+        let mut bytes = vec![0u8; size];
+        match self.file.read_exact(&mut bytes) {
+            Ok(()) => Ok(bytes),
+            Err(e) => Err(ParserError::IOError(e)),
+        }
+    }
+
+    fn seek(&mut self, pos: i64) -> Result<(), ParserError> {
+        match self.file.seek(SeekFrom::Current(pos)) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(ParserError::IOError(e)),
+        }
     }
 }
