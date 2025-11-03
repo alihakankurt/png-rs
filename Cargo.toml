@@ -1,6 +1,9 @@
 [package]
 name = "png-rs"
 version = "0.1.0"
+authors = ["Ali Hakan Kurt <kurtalihakan@outlook.com>"]
 edition = "2024"
-
-[dependencies]
+description = "A parser for PNG images"
+readme = "README.md"
+repository = "https://github.com/alihakankurt/png-rs"
+license = "MIT"
