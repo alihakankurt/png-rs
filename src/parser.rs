@@ -85,14 +85,14 @@ impl<'a, Source: Read + Seek> Parser<'a, Source> {
         let data = &type_and_data[4..];
 
         if chunk_type != chunk_ids::IHDR {
-            return Err(ParserError::MissingRequiredChunk(chunk_ids::IDAT));
+            return Err(ParserError::MissingRequiredChunk(chunk_ids::IHDR));
         }
 
         if length != 13 {
             return Err(ParserError::InvalidChunkLength(chunk_ids::IHDR));
         }
 
-        self.header = Some(HeaderInfo {
+        let header_info = HeaderInfo {
             width: utils::to_u32(&data[0..4]),
             height: utils::to_u32(&data[4..8]),
             bit_depth: data[8],
@@ -117,7 +117,25 @@ impl<'a, Source: Read + Seek> Parser<'a, Source> {
                 1 => InterlaceMethod::Adam7,
                 _ => return Err(ParserError::InvalidFieldValue),
             },
-        });
+        };
+
+        if header_info.width == 0 || header_info.height == 0 {
+            return Err(ParserError::InvalidFieldValue);
+        }
+
+        let is_valid_bit_depth = match header_info.color_type {
+            ColorType::Grayscale => matches!(header_info.bit_depth, 1 | 2 | 4 | 8 | 16),
+            ColorType::IndexedColor => matches!(header_info.bit_depth, 1 | 2 | 4 | 8),
+            ColorType::TrueColor | ColorType::GrayscaleAlpha | ColorType::TrueColorAlpha => {
+                matches!(header_info.bit_depth, 8 | 16)
+            }
+        };
+
+        if !is_valid_bit_depth {
+            return Err(ParserError::InvalidFieldValue);
+        }
+
+        self.header = Some(header_info);
 
         return Ok(());
     }
@@ -294,7 +312,7 @@ impl<'a, Source: Read + Seek> Parser<'a, Source> {
             return Err(ParserError::InvalidChunkLength(chunk_ids::gAMA));
         }
 
-        let gamma = utils::to_u32(data) as f32 / 100000f32;
+        let gamma = utils::to_f32(data);
 
         self.gamma = Some(GammaInfo { gamma });
 
