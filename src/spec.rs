@@ -1,3 +1,51 @@
+/// The byte values of PNG signature.
+pub const SIGNATURE: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+
+/// The type of each chunk id.
+pub type ChunkId = u32;
+
+#[allow(non_upper_case_globals)]
+pub mod chunk_ids {
+    use crate::spec::ChunkId;
+
+    /// Image Header
+    pub const IHDR: ChunkId = u32::from_be_bytes(*b"IHDR");
+    /// Palette
+    pub const PLTE: ChunkId = u32::from_be_bytes(*b"PLTE");
+    /// Image Data
+    pub const IDAT: ChunkId = u32::from_be_bytes(*b"IDAT");
+    /// Image Trailer
+    pub const IEND: ChunkId = u32::from_be_bytes(*b"IEND");
+    /// Transparency
+    pub const tRNS: ChunkId = u32::from_be_bytes(*b"tRNS");
+    /// Image Gamma
+    pub const gAMA: ChunkId = u32::from_be_bytes(*b"gAMA");
+    /// Primary Chromaticities
+    pub const cHRM: ChunkId = u32::from_be_bytes(*b"cHRM");
+    /// Standard RGB Color Space
+    pub const sRGB: ChunkId = u32::from_be_bytes(*b"sRGB");
+    /// Embedded ICC Profile
+    pub const iCCP: ChunkId = u32::from_be_bytes(*b"iCCP");
+    /// Textual Data
+    pub const tEXt: ChunkId = u32::from_be_bytes(*b"tEXt");
+    /// Compressed Textual Data
+    pub const zTXt: ChunkId = u32::from_be_bytes(*b"zTXt");
+    /// International Textual Data
+    pub const iTXt: ChunkId = u32::from_be_bytes(*b"iTXt");
+    /// Background Color
+    pub const bKGD: ChunkId = u32::from_be_bytes(*b"bKGD");
+    /// Physical Pixel Dimensions
+    pub const pHYs: ChunkId = u32::from_be_bytes(*b"pHYs");
+    /// Significant Bits
+    pub const sBIT: ChunkId = u32::from_be_bytes(*b"sBIT");
+    /// Suggested Palette
+    pub const sPLT: ChunkId = u32::from_be_bytes(*b"sPLT");
+    /// Palette Histogram
+    pub const hIST: ChunkId = u32::from_be_bytes(*b"hIST");
+    /// Image Last Modification Time
+    pub const tIME: ChunkId = u32::from_be_bytes(*b"tIME");
+}
+
 /// Describes the pixel interpretation of an image data.
 #[derive(Debug)]
 pub enum ColorType {
@@ -65,8 +113,8 @@ pub struct PaletteInfo {
 /// Represents the info of `IDAT` chunk.
 #[derive(Debug)]
 pub struct CompressedDataInfo {
-    /// The chunk count.
-    pub count: u32,
+    /// The number of chunks.
+    pub chunk_count: u32,
     /// The compressed pixel data.
     pub data: Vec<u8>,
 }
@@ -82,9 +130,9 @@ pub struct TrailerInfo {
 #[derive(Debug)]
 pub enum TransparencyVariant {
     /// For grayscale images, a single gray level value.
-    Grayscale(u8),
+    Grayscale(u16),
     /// For true-color images, an RGB color value.
-    TrueColor(u8, u8, u8),
+    TrueColor(u16, u16, u16),
     /// For indexed-color images, series of alpha values corresponding to the palette entries.
     IndexedColor(Vec<u8>),
 }
@@ -106,13 +154,13 @@ pub struct GammaInfo {
 /// Represents the info of `cHRM` chunk.
 #[derive(Debug)]
 pub struct ChromaticityInfo {
-    /// The white point chromacity of X and Y axes.
+    /// The white point chromaticity of X and Y axes.
     pub white_point: (f32, f32),
-    /// The red chromacity of X and Y axes.
+    /// The red chromaticity of X and Y axes.
     pub red: (f32, f32),
-    /// The green chromacity of X and Y axes.
+    /// The green chromaticity of X and Y axes.
     pub green: (f32, f32),
-    /// The blue chromacity of X and Y axes.
+    /// The blue chromaticity of X and Y axes.
     pub blue: (f32, f32),
 }
 
@@ -156,26 +204,26 @@ pub struct TextualDataInfo {
     pub text: String,
 }
 
-/// Represents the info of `zEXt` chunk.
+/// Represents the info of `zTXt` chunk.
 #[derive(Debug)]
 pub struct CompressedTextualDataInfo {
     /// The keyword.
     pub keyword: String,
     /// The compression method used to compress text.
-    pub compressed_method: CompressionMethod,
+    pub compression_method: CompressionMethod,
     /// The compressed text data.
-    pub compressed_text: Vec<u8>,
+    pub text: Vec<u8>,
 }
 
-/// Represents the info of `iEXt` chunk.
+/// Represents the info of `iTXt` chunk.
 #[derive(Debug)]
 pub struct InternationalTextualDataInfo {
     /// The keyword.
     pub keyword: String,
     /// Whether the text is compressed.
-    pub compression_flag: bool,
+    pub is_compressed: bool,
     /// The compression method used to compress text.
-    pub compressed_method: CompressionMethod,
+    pub compression_method: CompressionMethod,
     /// The language.
     pub language_tag: String,
     /// The translated keyword.
@@ -205,7 +253,7 @@ pub struct BackgroundInfo {
 /// Describes physical pixel unit specifier.
 #[derive(Debug)]
 pub enum PhysicalUnitSpecifier {
-    /// Unit is unknown, used define pixel aspect ratio only.
+    /// Unit is unknown, used to define pixel aspect ratio only.
     Unknown,
     /// Unit is in meters.
     Meter,
@@ -242,16 +290,17 @@ pub struct SignificantBitsInfo {
     pub significant_bits: SignificantBitsVariant,
 }
 
+/// Represents an entry for suggested palette info.
 #[derive(Debug)]
-pub struct SuggestedPaletteSample {
+pub struct SuggestedPaletteEntry {
     /// The red sample.
-    pub red: [u8; 2],
+    pub red: u16,
     /// The green sample.
-    pub green: [u8; 2],
+    pub green: u16,
     /// The blue sample.
-    pub blue: [u8; 2],
+    pub blue: u16,
     /// The alpha sample.
-    pub alpha: [u8; 2],
+    pub alpha: u16,
     /// The frequency.
     pub frequency: u16,
 }
@@ -264,7 +313,7 @@ pub struct SuggestedPaletteInfo {
     /// The sample depth
     pub sample_depth: u8,
     /// The sample entries.
-    pub entries: Vec<SuggestedPaletteSample>,
+    pub entries: Vec<SuggestedPaletteEntry>,
 }
 
 /// Represents the info of `hIST` chunk.
@@ -308,9 +357,9 @@ pub struct PngInfo {
     /// The palette.
     pub palette: Option<PaletteInfo>,
     /// The compressed data.
-    pub data: CompressedDataInfo,
+    pub compressed_data: CompressedDataInfo,
     /// The trailer.
-    pub trailer: Option<TrailerInfo>,
+    pub trailer: TrailerInfo,
     /// The transparency values.
     pub transparency: Option<TransparencyInfo>,
     /// The gamma value.
@@ -329,8 +378,8 @@ pub struct PngInfo {
     pub international_textual_data: Vec<InternationalTextualDataInfo>,
     /// The background color.
     pub background: Option<BackgroundInfo>,
-    /// The physical pixel dimensions.
-    pub physical_dimensions: Option<PhysicalPixelDimensionInfo>,
+    /// The physical pixel dimension.
+    pub physical_pixel_dimension: Option<PhysicalPixelDimensionInfo>,
     /// The significant bits.
     pub significant_bits: Option<SignificantBitsInfo>,
     /// The vector of suggested palettes.

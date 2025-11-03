@@ -1,5 +1,5 @@
 use png_rs::parser::Parser;
-use std::{env, process::ExitCode};
+use std::{env, fs, process::ExitCode};
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
@@ -10,20 +10,22 @@ fn main() -> ExitCode {
     }
 
     let filepath = &args[1];
-    match Parser::new(filepath) {
-        Ok(mut parser) => match parser.parse() {
-            Ok(info) => {
-                println!("{:?}", info);
-                return ExitCode::SUCCESS;
-            }
-            Err(e) => {
-                println!("Parser Error: {}", e);
-                return ExitCode::FAILURE;
-            }
-        },
-        Err(e) => {
-            println!("Parser Error: {}", e);
+    let mut file = match fs::File::open(filepath) {
+        Ok(f) => f,
+        Err(ref e) => {
+            println!("Unable to open {}: {}", filepath, e);
             return ExitCode::FAILURE;
         }
-    }
+    };
+
+    return match Parser::parse(&mut file) {
+        Ok(info) => {
+            println!("{:#?}", info);
+            ExitCode::SUCCESS
+        }
+        Err(ref e) => {
+            println!("Parser Error: {}", e);
+            ExitCode::FAILURE
+        }
+    };
 }
