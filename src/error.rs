@@ -8,6 +8,7 @@ use std::{
 pub enum ParserError {
     IOError(Error),
     InvalidSignature,
+    CorruptedData,
     InvalidChunkLength(u32),
     InvalidChunkOrder(u32),
     DuplicateChunk(u32),
@@ -23,6 +24,7 @@ impl Display for ParserError {
         match self {
             ParserError::IOError(e) => write!(f, "IO error: {}", e),
             ParserError::InvalidSignature => write!(f, "Invalid PNG signature"),
+            ParserError::CorruptedData => write!(f, "Corrupted PNG data"),
             ParserError::InvalidChunkLength(chunk_id) => write!(
                 f,
                 "{} chunk has invalid chunk length",

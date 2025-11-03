@@ -1,5 +1,6 @@
 use std::io::{Read, Seek};
 
+use crate::crc32;
 use crate::error::ParserError;
 use crate::spec::*;
 use crate::utils;
@@ -78,8 +79,11 @@ impl<'a, Source: Read + Seek> Parser<'a, Source> {
     fn parse_header(&mut self) -> Result<(), ParserError> {
         let length = utils::read_u32(self.source)?;
         let type_and_data = utils::read_bytes(self.source, 4 + length as usize)?;
-        // TODO(@alihakankurt): Use this variable to check data integrity.
-        let _crc = utils::read_u32(self.source)?;
+        let crc = utils::read_u32(self.source)?;
+
+        if crc32::compute(&type_and_data) != crc {
+            return Err(ParserError::CorruptedData);
+        }
 
         let chunk_type = utils::to_u32(&type_and_data[..4]);
         let data = &type_and_data[4..];
@@ -144,8 +148,11 @@ impl<'a, Source: Read + Seek> Parser<'a, Source> {
         while self.trailer.is_none() {
             let length = utils::read_u32(self.source)?;
             let type_and_data = utils::read_bytes(self.source, 4 + length as usize)?;
-            // TODO(@alihakankurt): Use this variable to check data integrity.
-            let _crc = utils::read_u32(self.source)?;
+            let crc = utils::read_u32(self.source)?;
+
+            if crc32::compute(&type_and_data) != crc {
+                return Err(ParserError::CorruptedData);
+            }
 
             let chunk_type = utils::to_u32(&type_and_data[..4]);
             let data = &type_and_data[4..];
@@ -225,8 +232,11 @@ impl<'a, Source: Read + Seek> Parser<'a, Source> {
 
             utils::seek(self.source, -4)?;
             let type_and_data = utils::read_bytes(self.source, 4 + length as usize)?;
-            // TODO(@alihakankurt): Use this variable to check data integrity.
-            let _crc = utils::read_u32(self.source)?;
+            let crc = utils::read_u32(self.source)?;
+
+            if crc32::compute(&type_and_data) != crc {
+                return Err(ParserError::CorruptedData);
+            }
 
             data.extend_from_slice(&type_and_data[4..]);
             chunk_count += 1;
